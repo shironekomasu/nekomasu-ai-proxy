@@ -1,20 +1,20 @@
-FROM mcr.microsoft.com/playwright:v1.59.0-jammy
+# 使用 Playwright 官方提供的 Linux 環境，內建所有瀏覽器依賴
+FROM mcr.microsoft.com/playwright:v1.40.0-focal
 
-# Create app directory
+# 設定工作目錄
 WORKDIR /app
 
-# Copy package.json and package-lock.json
+# 複製 package.json 與 package-lock.json
 COPY package*.json ./
 
-# Install app dependencies
+# 安裝 Node 套件
 RUN npm install
 
-# Bundle app source
+# 複製所有代碼
 COPY . .
 
-# Setting up PORT configuration
-ENV PORT=4000
+# 暴露連接埠
 EXPOSE 4000
 
-# Start the application
-CMD [ "node", "server.js" ]
+# 啟動伺服器
+CMD ["npm", "start"]

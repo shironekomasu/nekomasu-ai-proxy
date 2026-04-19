@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: nekomasu-ai-proxy
+    runtime: node
+    plan: free # 可視需求調整為 paid (512MB RAM 在免費版有時會吃緊)
+    buildCommand: npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 18.0.0
+      - key: GEMINI_API_KEY
+        sync: false # 請在完成部屬後於後台填入
+      - key: PORT
+        value: 4000

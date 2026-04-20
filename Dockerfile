@@ -1,5 +1,5 @@
 # 使用 Playwright 官方提供的 Linux 環境，內建所有瀏覽器依賴
-FROM mcr.microsoft.com/playwright:v1.59.1-focal
+FROM mcr.microsoft.com/playwright:v1.59.1-jammy
 
 # 設定工作目錄
 WORKDIR /app

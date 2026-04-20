@@ -86,7 +86,7 @@ async function findPriceByAnchor(page) {
                     return parsed;
                 }
             }
-        } catch (e) {}
+        } catch (e) { }
     }
 
     // 策略 B：從「加入購物車」按鈕的相鄰 DOM 中搜尋（限電商商品頁）
@@ -111,7 +111,7 @@ async function findPriceByAnchor(page) {
                     return parsed;
                 }
             }
-        } catch (e) {}
+        } catch (e) { }
     }
 
     // 策略 C：全頁掃描，找所有符合貨幣格式的節點，選最常出現的值（頻率最高 = 最可信）
@@ -150,6 +150,9 @@ async function sniffAvailableOptions(page) {
         /** 工具：標準化字串，去除多餘空白 */
         const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
 
+        /** 工具：判斷是否為行銷垃圾字眼 */
+        const isPromoText = (text) => /(折扣|滿.*折|加碼|說明|最高折|優惠|贈品|免運)/i.test(text);
+
         // --- 標準 ARIA radiogroup ---
         document.querySelectorAll('[role="radiogroup"]').forEach((group, i) => {
             const label = clean(
@@ -159,7 +162,7 @@ async function sniffAvailableOptions(page) {
             );
             const options = Array.from(group.querySelectorAll('[role="radio"], [aria-checked], input[type="radio"]'))
                 .map(o => clean(o.innerText || o.value || o.getAttribute('aria-label') || ''))
-                .filter(Boolean);
+                .filter(v => v && !isPromoText(v));
             if (options.length >= 2) result[label] = options;
         });
 
@@ -170,11 +173,13 @@ async function sniffAvailableOptions(page) {
                 document.querySelector(`label[for="${sel.id}"]`)?.innerText ||
                 `Select_${i + 1}`
             );
-            const options = Array.from(sel.options).map(o => clean(o.text)).filter(Boolean);
+            const options = Array.from(sel.options)
+                .map(o => clean(o.text))
+                .filter(v => v && !isPromoText(v));
             if (options.length >= 2) result[label] = options;
         });
 
-        // --- 通用按鈕群組（Wooting 風格：React 自製 swatch）---
+        // --- 通用按鈕群組（React 自製 swatch）---
         document.querySelectorAll('div, ul, nav').forEach((container) => {
             const interactables = Array.from(container.children).filter(c =>
                 c.tagName === 'BUTTON' ||
@@ -186,7 +191,7 @@ async function sniffAvailableOptions(page) {
 
             const values = interactables
                 .map(b => clean(b.innerText))
-                .filter(v => v && v.length < 50);
+                .filter(v => v && v.length < 50 && !isPromoText(v));
 
             if (values.length >= 2) {
                 const key = `AutoGroup_${container.className.substring(0, 30) || container.id || Object.keys(result).length}`;

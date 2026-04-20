@@ -60,7 +60,7 @@ function parseSSRState(html) {
             const shopifyMeta = (new Function('return ' + jsonStr))();
             results.source = 'shopify_meta';
             results.raw = shopifyMeta;
-            
+
             // Shopify 有時候把 currency 放在 meta 最外層
             const currency = shopifyMeta.currency || shopifyMeta.priceCurrency;
 
@@ -89,7 +89,7 @@ function parseSSRState(html) {
                 results.product = normalizeJsonLdProduct(item);
                 return results;
             }
-        } catch (e) {}
+        } catch (e) { }
     }
 
     // --- Generic: 任意 <script> 裡的 JSON 含有 price/variants 關鍵字 ---
@@ -107,7 +107,7 @@ function parseSSRState(html) {
                 results.product = product;
                 return results;
             }
-        } catch (e) {}
+        } catch (e) { }
     }
 
     console.log('[Tier1] ❌ No SSR state found.');
@@ -123,12 +123,12 @@ async function interceptNetworkAPIs(page, targetUrl = '') {
         try {
             const parts = new URL(targetUrl).pathname.split('/');
             targetSlug = parts.pop() || parts.pop();
-        } catch(e) {}
+        } catch (e) { }
 
         const timeout = setTimeout(() => resolve(null), 35000);
         const PRICE_KEYWORDS = /price|variant|sku|product|offer|cart/i;
         const EXCLUDE_KEYWORDS = /also-bought|recommendations|related|cross-sell|upsell|cart\.js/i;
-        
+
         let bestProduct = null;
         let maxVariants = -1;
 
@@ -162,7 +162,7 @@ async function interceptNetworkAPIs(page, targetUrl = '') {
                         }
                     }
                 }
-            } catch (e) {}
+            } catch (e) { }
         });
 
         page.once('load', () => {
@@ -204,11 +204,11 @@ function deepFindProduct(obj, depth = 0) {
 function isProductObject(obj) {
     if (typeof obj !== 'object' || Array.isArray(obj)) return false;
     const keys = Object.keys(obj).map(k => k.toLowerCase());
-    
+
     const hasName = keys.some(k => ['title', 'name', 'product_name', 'handle'].includes(k));
     const hasPrice = keys.some(k => ['price', 'current_price', 'sale_price', 'price_min'].includes(k));
     const hasVariants = keys.includes('variants') && Array.isArray(obj.variants || obj.Variants);
-    
+
     return hasName && (hasPrice || hasVariants);
 }
 
@@ -224,7 +224,7 @@ function normalizeProduct(obj) {
     const image = obj.featured_image ?? obj.image?.src ?? obj.image ?? obj.thumbnail ?? '';
 
     const imagesList = Array.isArray(obj.images) ? obj.images : [];
-    
+
     // 建立合法屬性註冊表 (提取自母商品定義)
     let validOptionValues = null;
     if (Array.isArray(obj.options) && obj.options.length > 0) {
@@ -246,6 +246,7 @@ function normalizeProduct(obj) {
         return variantArr
             .filter(v => {
                 const title = (v.title ?? v.name ?? v.option1 ?? '').trim();
+
                 if (title === 'Default Title') return false;
 
                 // 強制攔截：只要包含行銷字眼的括號標籤，或是明顯的滿減公式，一律視為假規格
@@ -261,7 +262,7 @@ function normalizeProduct(obj) {
                     // 備用防線
                     if (/^\[.*\]$/.test(title) && title.includes('/')) return false;
                 }
-                
+
                 return true;
             })
             .slice(0, 100)

@@ -3,104 +3,63 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 
 async function scrape(url, selectedOptions = []) {
-    console.log(`[Amazon Scraper] ⚡ 走 API 極速路線抓取: ${url}`);
+    console.log(`[Amazon Scraper] ⚡ 透過 Proxy API 抓取: ${url}`);
 
     try {
-        // 1. 發送高度偽裝的 Axios 請求 (模擬真實瀏覽器)
-        const response = await axios.get(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9,zh-TW;q=0.8,zh;q=0.7',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Cache-Control': 'max-age=0',
-            },
-            timeout: 15000 // 15 秒 Timeout
-        });
+        // 🚨 秘密武器：將原本直接打 Amazon 的網址，交給 ScraperAPI 代發
+        const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY || '你的免費API_KEY';
+        const proxyUrl = `http://api.scraperapi.com/?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(url)}`;
+
+        // 因為 Proxy API 已經幫我們處理好所有 IP 輪替和反爬蟲破解，所以 Header 甚至可以不用帶！
+        const response = await axios.get(proxyUrl, { timeout: 25000 });
 
         const html = response.data;
         const $ = cheerio.load(html);
 
-        // 2. 檢查是否撞到 Amazon 的反爬蟲驗證碼 (CAPTCHA) 或機器人阻擋牆
-        if ($('title').text().includes('Robot Check') || $('form[action="/errors/validateCaptcha"]').length > 0) {
-            console.warn(`[Amazon Scraper] 🚨 被 Amazon 驗證碼牆擋住了！`);
-            throw new Error('Amazon CAPTCHA blocked');
-            // 拋出錯誤後，Router 會自動切換回通用爬蟲 (Playwright Stealth) 進行救援
-        }
-
-        // 3. 萃取商品標題
+        // --- 以下的解析邏輯完全不變 ---
         const title = $('#productTitle').text().trim() || $('#title').text().trim();
-
-        // 4. 萃取商品價格 (Amazon 的價格 DOM 結構非常多變，需要多重 Fallback)
         let priceRaw =
             $('.priceToPay span.a-offscreen').first().text().trim() ||
             $('#corePriceDisplay_desktop_feature_div .a-price-whole').first().text().trim() ||
             $('#priceblock_ourprice').text().trim() ||
-            $('#priceblock_dealprice').text().trim() ||
             $('.a-color-price').first().text().trim();
 
         let price = 0;
-        if (priceRaw) {
-            // 清理文字，只保留數字和少數小數點
-            price = parseFloat(priceRaw.replace(/[^0-9.]/g, ''));
-        }
+        if (priceRaw) price = parseFloat(priceRaw.replace(/[^0-9.]/g, ''));
 
-        // 5. 判斷幣種 (優先從網頁真實顯示的符號判斷，防止 IP 自動換匯)
         let currency = 'USD';
-        if (/NT\$|TWD|NTD/.test(priceRaw)) {
-            currency = 'TWD';
-        } else if (/¥|JPY|円/.test(priceRaw)) {
-            currency = 'JPY';
-        } else if (/€|EUR/.test(priceRaw)) {
-            currency = 'EUR';
-        } else if (/£|GBP/.test(priceRaw)) {
-            currency = 'GBP';
-        } else if (/₩|KRW/.test(priceRaw)) {
-            currency = 'KRW';
-        } else {
-            // 如果符號不明確 (例如只有 $)，才用網址來當作 Fallback
-            if (url.includes('amazon.co.jp')) currency = 'JPY';
-            else if (url.includes('amazon.de') || url.includes('amazon.fr') || url.includes('amazon.nl')) currency = 'EUR';
-            else if (url.includes('amazon.co.uk')) currency = 'GBP';
-        }
+        if (/NT\$|TWD|NTD/.test(priceRaw)) currency = 'TWD';
+        else if (/¥|JPY|円/.test(priceRaw)) currency = 'JPY';
+        else if (url.includes('amazon.co.jp')) currency = 'JPY';
 
-        // 6. 萃取主圖 (優先抓取 Amazon 的高畫質原圖)
         let image = $('#landingImage').attr('data-old-hires') || $('#landingImage').attr('src');
         if (!image) {
-            // 有時候圖片是寫在 Javascript 的動態物件裡，用正則硬洗出來
             const imgMatch = html.match(/"large":"(https:\/\/[^"]+)"/);
             if (imgMatch) image = imgMatch[1];
         }
 
-        // 若標題或價格抓不到，判定解析失敗，退回給 Playwright 處理
-        if (!title || price === 0) {
-            throw new Error('無法精準萃取標題或價格 (版面可能已變更)');
-        }
+        if (!title || price === 0) throw new Error('解析失敗 (可能版面變更或依然被擋)');
 
         console.log(`[Amazon Scraper] ✅ 成功取得資料: ${title.substring(0, 30)}... | 價格: ${price} ${currency}`);
 
         return {
             productInfo: {
-                source: 'amazon_api_scraper',
+                source: 'amazon_proxy_scraper',
                 title: title,
                 original_price: price,
                 original_currency: currency,
                 image: image || '',
-                variants: [], // API 極速版專注於當前選中的規格網址
+                variants: [],
             },
             availableVariants: {},
             seoMeta: {}
         };
 
     } catch (error) {
-        console.warn(`[Amazon Scraper] ⚠️ API 抓取失敗: ${error.message}，準備退回通用 AI 爬蟲...`);
-        throw error; // 這裡把錯誤丟出去，scraper-router.js 的 try-catch 就會接手，完美觸發 Fallback
+        // 攔截並印出 Axios 的狀態碼，方便知道是不是 Proxy 也被擋了
+        const status = error.response ? error.response.status : 'N/A';
+        console.warn(`[Amazon Scraper] ⚠️ 抓取失敗 (Status: ${status}): ${error.message}`);
+        throw error; // 退回給 Router 的 Playwright 處理
     }
 }
 

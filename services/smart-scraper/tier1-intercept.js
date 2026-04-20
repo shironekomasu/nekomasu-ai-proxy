@@ -248,14 +248,17 @@ function normalizeProduct(obj) {
                 const title = (v.title ?? v.name ?? v.option1 ?? '').trim();
                 if (title === 'Default Title') return false;
 
-                // 【極致精準】不依賴字串關鍵字，改採結構比對
-                // 如果變數中攜帶的 option (1/2/3) 並未註冊在母商品的 UI 屬性中，絕對是折扣外掛產生的隱藏變數
+                // 強制攔截：如果完全符合 `[包含行銷字眼]` 的嚴格中括號格式，無條件視為外掛假變數
+                const isPromoBracket = /^\[.*(折扣|滿.*折|加碼|說明|最高折|優惠|贈品).*\]$/i.test(title);
+                if (isPromoBracket) return false;
+
+                // 結構比對：如果變數中攜帶的 option (1/2/3) 並未註冊在母商品的 UI 屬性中，視為隱藏變數
                 if (validOptionValues) {
                     if (v.option1 && !validOptionValues.has(v.option1)) return false;
                     if (v.option2 && !validOptionValues.has(v.option2)) return false;
                     if (v.option3 && !validOptionValues.has(v.option3)) return false;
                 } else {
-                    // 若無註冊表可供對比，僅攔截最標準的外掛產物如 [xxx / xxx]
+                    // 備用防線
                     if (/^\[.*\]$/.test(title) && title.includes('/')) return false;
                 }
                 

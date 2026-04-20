@@ -6,7 +6,7 @@ const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // ── 智能爬蟲服務 ──
-const { smartScrape } = require('./services/smart-scraper');
+const { routeScrape } = require('./services/scraper-router');
 const calculator = require('./services/calculator');
 
 const app = express();
@@ -35,7 +35,7 @@ app.post('/api/quote', async (req, res) => {
         if (!url) return res.status(400).json({ success: false, error: '缺少 url' });
 
         console.log(`\n🚀 [Quote] ${url}`);
-        const { productInfo = null, availableVariants = null, seoMeta = {} } = (await smartScrape(url, selectedOptions || []) || {});
+        const { productInfo = null, availableVariants = null, seoMeta = {} } = (await routeScrape(url, selectedOptions || []) || {});
 
         if (!productInfo) {
             return res.json({ success: true, needsManualQuote: true, source_url: url });

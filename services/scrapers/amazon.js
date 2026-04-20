@@ -51,11 +51,24 @@ async function scrape(url, selectedOptions = []) {
             price = parseFloat(priceRaw.replace(/[^0-9.]/g, ''));
         }
 
-        // 5. 判斷幣種 (從網址判斷最準確)
+        // 5. 判斷幣種 (優先從網頁真實顯示的符號判斷，防止 IP 自動換匯)
         let currency = 'USD';
-        if (url.includes('amazon.co.jp')) currency = 'JPY';
-        else if (url.includes('amazon.de') || url.includes('amazon.fr') || url.includes('amazon.nl')) currency = 'EUR';
-        else if (url.includes('amazon.co.uk')) currency = 'GBP';
+        if (/NT\$|TWD|NTD/.test(priceRaw)) {
+            currency = 'TWD';
+        } else if (/¥|JPY|円/.test(priceRaw)) {
+            currency = 'JPY';
+        } else if (/€|EUR/.test(priceRaw)) {
+            currency = 'EUR';
+        } else if (/£|GBP/.test(priceRaw)) {
+            currency = 'GBP';
+        } else if (/₩|KRW/.test(priceRaw)) {
+            currency = 'KRW';
+        } else {
+            // 如果符號不明確 (例如只有 $)，才用網址來當作 Fallback
+            if (url.includes('amazon.co.jp')) currency = 'JPY';
+            else if (url.includes('amazon.de') || url.includes('amazon.fr') || url.includes('amazon.nl')) currency = 'EUR';
+            else if (url.includes('amazon.co.uk')) currency = 'GBP';
+        }
 
         // 6. 萃取主圖 (優先抓取 Amazon 的高畫質原圖)
         let image = $('#landingImage').attr('data-old-hires') || $('#landingImage').attr('src');

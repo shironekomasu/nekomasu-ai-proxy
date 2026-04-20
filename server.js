@@ -3,7 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { GoogleGenAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // ── 智能爬蟲服務 ──
 const { smartScrape } = require('./services/smart-scraper');
@@ -76,7 +76,7 @@ app.post('/api/chat', async (req, res) => {
 
         if (!process.env.GEMINI_API_KEY) throw new Error("缺少 GEMINI_API_KEY");
 
-        const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
         
         let systemPrompt = "";
         const geminiContents = [];

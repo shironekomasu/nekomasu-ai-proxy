@@ -248,9 +248,9 @@ function normalizeProduct(obj) {
                 const title = (v.title ?? v.name ?? v.option1 ?? '').trim();
                 if (title === 'Default Title') return false;
 
-                // 強制攔截：如果完全符合 `[包含行銷字眼]` 的嚴格中括號格式，無條件視為外掛假變數
-                const isPromoBracket = /^\[.*(折扣|滿.*折|加碼|說明|最高折|優惠|贈品).*\]$/i.test(title);
-                if (isPromoBracket) return false;
+                // 強制攔截：只要包含行銷字眼的括號標籤，或是明顯的滿減公式，一律視為假規格
+                const isPromo = /\[.*(折扣|滿.*折|加碼|說明|最高折|優惠|贈品|免運|促銷|活動|購物金).*\]/i.test(title) || /(滿\d+折\d+|折價券|折扣碼)/i.test(title);
+                if (isPromo) return false;
 
                 // 結構比對：如果變數中攜帶的 option (1/2/3) 並未註冊在母商品的 UI 屬性中，視為隱藏變數
                 if (validOptionValues) {

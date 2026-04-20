@@ -150,8 +150,8 @@ async function sniffAvailableOptions(page) {
         /** 工具：標準化字串，去除多餘空白 */
         const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
 
-        /** 工具：判斷是否為行銷垃圾字眼 */
-        const isPromoText = (text) => /(折扣|滿.*折|加碼|說明|最高折|優惠|贈品|免運)/i.test(text);
+        /** 🚨 超強過濾網：行銷垃圾、庫存狀態、出貨方式一律擋掉 */
+        const isJunkText = (text) => /(折扣|滿.*折|加碼|說明|最高折|優惠|贈品|免運|online|offline|pickup|delivery|shipping|in stock)/i.test(text);
 
         // --- 標準 ARIA radiogroup ---
         document.querySelectorAll('[role="radiogroup"]').forEach((group, i) => {
@@ -160,9 +160,12 @@ async function sniffAvailableOptions(page) {
                 group.querySelector('legend, h2, h3, h4, label, p')?.innerText ||
                 `Option_${i + 1}`
             );
+            // 🚨 過濾掉標題是數量的群組
+            if (/(qty|quantity|數量)/i.test(label)) return;
+
             const options = Array.from(group.querySelectorAll('[role="radio"], [aria-checked], input[type="radio"]'))
                 .map(o => clean(o.innerText || o.value || o.getAttribute('aria-label') || ''))
-                .filter(v => v && !isPromoText(v));
+                .filter(v => v && !isJunkText(v) && !/^\d+$/.test(v)); // 🚨 過濾純數字
             if (options.length >= 2) result[label] = options;
         });
 
@@ -171,11 +174,16 @@ async function sniffAvailableOptions(page) {
             const label = clean(
                 sel.previousElementSibling?.innerText ||
                 document.querySelector(`label[for="${sel.id}"]`)?.innerText ||
+                sel.getAttribute('name') ||
+                sel.getAttribute('aria-label') ||
                 `Select_${i + 1}`
             );
+            // 🚨 過濾掉標題是數量的群組
+            if (/(qty|quantity|數量)/i.test(label)) return;
+
             const options = Array.from(sel.options)
                 .map(o => clean(o.text))
-                .filter(v => v && !isPromoText(v));
+                .filter(v => v && !isJunkText(v) && !/^\d+$/.test(v)); // 🚨 過濾純數字
             if (options.length >= 2) result[label] = options;
         });
 
@@ -191,10 +199,13 @@ async function sniffAvailableOptions(page) {
 
             const values = interactables
                 .map(b => clean(b.innerText))
-                .filter(v => v && v.length < 50 && !isPromoText(v));
+                .filter(v => v && v.length < 50 && !isJunkText(v) && !/^\d+$/.test(v)); // 🚨 過濾純數字
 
             if (values.length >= 2) {
                 const key = `AutoGroup_${container.className.substring(0, 30) || container.id || Object.keys(result).length}`;
+                // 🚨 排除標題很像是數量的 key
+                if (/(qty|quantity|數量)/i.test(key)) return;
+
                 if (!Object.values(result).some(existing => JSON.stringify(existing) === JSON.stringify(values))) {
                     result[key] = [...new Set(values)];
                 }

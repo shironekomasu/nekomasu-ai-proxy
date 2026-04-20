@@ -13,6 +13,13 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const HOST = '0.0.0.0'; 
 
+// 偵錯：啟動時檢查 API Key
+if (!process.env.GEMINI_API_KEY) {
+    console.warn('⚠️  警告: GEMINI_API_KEY 未設定，AI 功能將無法運作！');
+} else {
+    console.log('✅ GEMINI_API_KEY 已偵測');
+}
+
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
@@ -56,6 +63,7 @@ app.post('/api/quote', async (req, res) => {
             pricing
         });
     } catch (e) {
+        console.error('=== [Quote Error] ===', e); // 增加詳細錯誤紀錄
         res.status(500).json({ success: false, error: e.message });
     }
 });
@@ -119,6 +127,7 @@ app.post('/api/chat', async (req, res) => {
 
         res.json({ success: true, message: returnMessage });
     } catch (error) {
+        console.error('=== [Chat Error] ===', error); // 增加詳細錯誤紀錄
         res.status(500).json({ success: false, error: error.message });
     }
 });

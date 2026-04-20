@@ -224,18 +224,42 @@ function normalizeProduct(obj) {
     const image = obj.featured_image ?? obj.image?.src ?? obj.image ?? obj.thumbnail ?? '';
 
     const imagesList = Array.isArray(obj.images) ? obj.images : [];
-    const variants = (() => {
-        const variantArr = obj.variants ?? obj.options ?? null;
-        if (!Array.isArray(variantArr)) return [];
+    
+    // 建立合法屬性註冊表 (提取自母商品定義)
+    let validOptionValues = null;
+    if (Array.isArray(obj.options) && obj.options.length > 0) {
+        validOptionValues = new Set();
+        obj.options.forEach(opt => {
+            if (typeof opt === 'string') {
+                validOptionValues.add(opt);
+            } else if (opt && Array.isArray(opt.values)) {
+                opt.values.forEach(v => validOptionValues.add(v));
+            }
+        });
+        if (validOptionValues.size === 0) validOptionValues = null;
+    }
 
-        const JUNK_KEYWORDS = /折扣|滿\s*\$?[\d,]+|折\s*\$?[\d,]+|加碼|優惠|說明|最高折|贈品|隱藏|Default Title/i;
+    const variants = (() => {
+        const variantArr = obj.variants ?? (Array.isArray(obj.options) && obj.options[0]?.price ? obj.options : null) ?? null;
+        if (!Array.isArray(variantArr)) return [];
 
         return variantArr
             .filter(v => {
-                const title = v.title ?? v.name ?? v.option1 ?? '';
-                // 排除電商系統自動產生的行銷/滿減/說明用的假變數
-                const isJunk = JUNK_KEYWORDS.test(title) || (title.startsWith('[') && title.includes('/'));
-                return !isJunk;
+                const title = (v.title ?? v.name ?? v.option1 ?? '').trim();
+                if (title === 'Default Title') return false;
+
+                // 【極致精準】不依賴字串關鍵字，改採結構比對
+                // 如果變數中攜帶的 option (1/2/3) 並未註冊在母商品的 UI 屬性中，絕對是折扣外掛產生的隱藏變數
+                if (validOptionValues) {
+                    if (v.option1 && !validOptionValues.has(v.option1)) return false;
+                    if (v.option2 && !validOptionValues.has(v.option2)) return false;
+                    if (v.option3 && !validOptionValues.has(v.option3)) return false;
+                } else {
+                    // 若無註冊表可供對比，僅攔截最標準的外掛產物如 [xxx / xxx]
+                    if (/^\[.*\]$/.test(title) && title.includes('/')) return false;
+                }
+                
+                return true;
             })
             .slice(0, 100)
             .map(v => {

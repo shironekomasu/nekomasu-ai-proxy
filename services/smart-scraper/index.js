@@ -124,11 +124,11 @@ async function smartScrape(url, selectedOptions = []) {
 
         let html = '';
         try {
-            html = await page.content(); // Keep original HTML for SSR parser
-        } catch(e) {
-            console.log('[SmartScraper] ⚠️ Context destroyed (likely redirect), retrying content capture...');
-            await page.waitForLoadState('load', { timeout: 10000 }).catch(() => {});
             html = await page.content();
+        } catch(e) {
+            console.log('[SmartScraper] ⚠️ page.content failed (navigating), retrying once...');
+            await page.waitForLoadState('load', { timeout: 3000 }).catch(() => {});
+            try { html = await page.content(); } catch(err) { console.log('⚠️ Give up capturing content.'); }
         }
 
         // ── 去除不相干的區域（如：相關文章、推薦商品、輪播），避免 Tier2/3 爬到無關變數 ──
@@ -146,7 +146,13 @@ async function smartScrape(url, selectedOptions = []) {
         } catch(e) {
             console.log('[SmartScraper] ⚠️ Context destroyed on evaluate, skipping cleanup.');
         }
-        const prunedHtml = await page.content();
+
+        let prunedHtml = '';
+        try {
+            prunedHtml = await page.content();
+        } catch(e) {
+            // Ignored, if it fails we just use empty prunedHtml
+        }
 
         // ── Tier 1B：SSR 靜態解析
         const ssrResult = parseSSRState(html);

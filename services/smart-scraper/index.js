@@ -116,7 +116,8 @@ async function smartScrape(url, selectedOptions = []) {
         // ── 導覽（等 networkidle 讓 SPA / GraphQL 完成所有請求）
         console.log('[SmartScraper] Navigating to page...');
         try {
-            await page.goto(scrapeUrl, { waitUntil: 'networkidle', timeout: 35000 });
+            await page.goto(scrapeUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+            await page.waitForTimeout(2500); // 給予 SPA 框架及 XHR 請求足夠的渲染時間
         } catch (e) {
             console.log(`[SmartScraper] ⚠️ page.goto networkidle timeout or error: ${e.message.split('\n')[0]}`);
             // 由於部分含有長連結 websocket或 analytics 的網站無法到達 networkidle 狀態

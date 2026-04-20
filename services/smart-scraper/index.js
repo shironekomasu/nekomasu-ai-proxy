@@ -116,28 +116,36 @@ async function smartScrape(url, selectedOptions = []) {
         // ── 導覽（等 networkidle 讓 SPA / GraphQL 完成所有請求）
         console.log('[SmartScraper] Navigating to page...');
         try {
-            await page.goto(scrapeUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            await page.waitForTimeout(2500); // 給予 SPA 框架及 XHR 請求足夠的渲染時間
+            await page.goto(scrapeUrl, { waitUntil: 'load', timeout: 15000 });
+            await page.waitForTimeout(1500); // 給予 SPA 框架及 XHR 請求足夠的渲染時間
         } catch (e) {
-            console.log(`[SmartScraper] ⚠️ page.goto networkidle timeout or error: ${e.message.split('\n')[0]}`);
-            // 由於部分含有長連結 websocket或 analytics 的網站無法到達 networkidle 狀態
-            // 只要 HTML 載入一半，或 XHR 已經攔截完成，我們依舊可以繼續執行
+            console.log(`[SmartScraper] ⚠️ page.goto timeout or error: ${e.message.split('\n')[0]}`);
         }
-        const html = await page.content(); // Keep original HTML for SSR parser
+
+        let html = '';
+        try {
+            html = await page.content(); // Keep original HTML for SSR parser
+        } catch(e) {
+            console.log('[SmartScraper] ⚠️ Context destroyed (likely redirect), retrying content capture...');
+            await page.waitForLoadState('load', { timeout: 10000 }).catch(() => {});
+            html = await page.content();
+        }
 
         // ── 去除不相干的區域（如：相關文章、推薦商品、輪播），避免 Tier2/3 爬到無關變數 ──
-        await page.evaluate(() => {
-            const selectors = [
-                'footer', 'header', 'nav', 'aside',
-                '[class*="related" i]', '[id*="related" i]',
-                '[class*="recommend" i]', '[id*="recommend" i]',
-                '[class*="carousel" i]', '[id*="carousel" i]',
-                '[class*="sidebar" i]', '[id*="sidebar" i]'
-            ];
-            try {
-                document.querySelectorAll(selectors.join(',')).forEach(el => el.remove());
-            } catch(e) {}
-        });
+        try {
+            await page.evaluate(() => {
+                const selectors = [
+                    'footer', 'header', 'nav', 'aside',
+                    '[class*="related" i]', '[id*="related" i]',
+                    '[class*="recommend" i]', '[id*="recommend" i]',
+                    '[class*="carousel" i]', '[id*="carousel" i]',
+                    '[class*="sidebar" i]', '[id*="sidebar" i]'
+                ];
+                try { document.querySelectorAll(selectors.join(',')).forEach(el => el.remove()); } catch(e) {}
+            });
+        } catch(e) {
+            console.log('[SmartScraper] ⚠️ Context destroyed on evaluate, skipping cleanup.');
+        }
         const prunedHtml = await page.content();
 
         // ── Tier 1B：SSR 靜態解析

@@ -44,66 +44,6 @@ function htmlToMarkdown(html, maxLength = 6000) {
 }
 
 /**
- * 呼叫本地 Ollama（零成本 fallback）進行 Structured JSON 解析
- * @param {string} markdown - 清理後的 Markdown 內容
- * @param {string} targetUrl - 目標 URL（幫助 AI 理解商品來源）
- * @returns {Promise<object|null>}
- */
-async function callOllamaStructured(markdown, targetUrl = '') {
-    const MODEL = process.env.OLLAMA_MODEL || 'gemma3:4b';
-    const SCHEMA = {
-        product_name: 'string',
-        variants: [{ spec: 'string', price: 'number', currency: 'string (ISO 4217)' }],
-    };
-
-    const systemPrompt = `你是一個高精度的電商資料結構化引擎。
-你的任務：從以下網頁 Markdown 中提取商品資訊，**只輸出 JSON，不輸出任何解釋文字**。
-
-必須遵守的 JSON Schema：
-${JSON.stringify(SCHEMA, null, 2)}
-
-規則：
-- currency 使用 ISO 4217 三碼大寫（TWD, JPY, USD, EUR, KRW 等）
-- 若有多種規格，每個規格各佔一個 variants 陣列項目
-- price 只填數字，不含貨幣符號
-- 若找不到某欄位，填入 null
-- 來源網站：${targetUrl}`;
-
-    try {
-        const response = await fetch('http://localhost:11434/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: MODEL,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: markdown }
-                ],
-                stream: false,
-                options: { temperature: 0.1, num_predict: 1024 }
-            }),
-            signal: AbortSignal.timeout(30000)
-        });
-
-        if (!response.ok) throw new Error(`Ollama HTTP ${response.status}`);
-        const data = await response.json();
-        const content = data?.message?.content || '';
-
-        // 提取 JSON（LLM 有時會在前後加說明文字）
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) throw new Error('No JSON found in response');
-
-        const parsed = JSON.parse(jsonMatch[0]);
-        console.log('[Tier3] ✅ Ollama structured output:', JSON.stringify(parsed).substring(0, 100));
-        return { source: 'ollama_tier3', product: parsed };
-
-    } catch (e) {
-        console.warn('[Tier3] Ollama call failed:', e.message);
-        return null;
-    }
-}
-
-/**
  * 呼叫 Gemini Flash（有 API Key 時的高品質 fallback）
  * @param {string} markdown
  * @param {string} targetUrl
@@ -179,10 +119,6 @@ async function runTier3(html, targetUrl = '') {
     // 優先 Gemini（有 key 時品質更好）
     const geminiResult = await callGeminiStructured(markdown, targetUrl);
     if (geminiResult) return geminiResult;
-
-    // Fallback 到本地 Ollama
-    const ollamaResult = await callOllamaStructured(markdown, targetUrl);
-    if (ollamaResult) return ollamaResult;
 
     console.log('[Tier3] ❌ All AI fallbacks failed.');
     return null;

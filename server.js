@@ -35,17 +35,20 @@ app.post('/api/quote', async (req, res) => {
         if (!url) return res.status(400).json({ success: false, error: '缺少 url' });
 
         console.log(`\n🚀 [Quote] ${url}`);
-        const { productInfo, availableVariants, seoMeta } = await smartScrape(url, selectedOptions || []);
+        const { productInfo = null, availableVariants = null, seoMeta = {} } = (await smartScrape(url, selectedOptions || []) || {});
 
         if (!productInfo) {
             return res.json({ success: true, needsManualQuote: true, source_url: url });
         }
 
+        const weight = productInfo.weight_kg || 0.5;
+        const dims = productInfo.dimensions || { l: 30, w: 20, h: 10 };
+
         const pricing = await calculator.estimateTotal(
             productInfo.original_price,
             productInfo.original_currency,
-            0.5,
-            { l: 30, w: 20, h: 10 }
+            weight,
+            dims
         );
 
         res.json({

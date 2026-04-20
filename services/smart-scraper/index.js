@@ -75,6 +75,17 @@ function normalizeOutput(tierResult, url) {
     };
 }
 
+let globalBrowser = null;
+async function getBrowser() {
+    if (!globalBrowser) {
+        globalBrowser = await playwrightStealth.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+        });
+    }
+    return globalBrowser;
+}
+
 // ──────────────────────────────────────────────
 // 主入口
 // ──────────────────────────────────────────────
@@ -82,14 +93,10 @@ async function smartScrape(url, selectedOptions = []) {
     console.log(`\n🤖 [SmartScraper] Starting: ${url}`);
     const t0 = Date.now();
 
-    let browser;
+    let context;
     try {
-        browser = await playwrightStealth.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-        });
-
-        const context = await browser.newContext({
+        const browser = await getBrowser();
+        context = await browser.newContext({
             userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
             locale: 'zh-TW',
             timezoneId: 'Asia/Taipei',
@@ -230,7 +237,7 @@ async function smartScrape(url, selectedOptions = []) {
         return { productInfo, availableVariants, html, seoMeta };
 
     } finally {
-        if (browser) await browser.close().catch(() => {});
+        if (context) await context.close().catch(() => {});
     }
 }
 

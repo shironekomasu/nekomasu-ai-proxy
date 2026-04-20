@@ -227,21 +227,32 @@ function normalizeProduct(obj) {
     const variants = (() => {
         const variantArr = obj.variants ?? obj.options ?? null;
         if (!Array.isArray(variantArr)) return [];
-        return variantArr.slice(0, 100).map(v => {
-            let varImage = v.featured_image?.src ?? v.image?.src ?? v.image ?? '';
-            if (!varImage && v.image_id) {
-                const matchedImg = imagesList.find(img => img.id === v.image_id);
-                if (matchedImg) varImage = matchedImg.src;
-            }
-            return {
-                spec: v.title ?? v.name ?? v.option1 ?? '',
-                price: typeof v.price === 'number' ? (v.price > 10000 && v.price % 100 === 0 ? v.price / 100 : v.price) : parseFloat(v.price ?? 0),
-                currency,
-                sku: v.sku ?? v.id ?? '',
-                available: v.available ?? true,
-                image: varImage,
-            };
-        });
+
+        const JUNK_KEYWORDS = /折扣|滿\s*\$?[\d,]+|折\s*\$?[\d,]+|加碼|優惠|說明|最高折|贈品|隱藏|Default Title/i;
+
+        return variantArr
+            .filter(v => {
+                const title = v.title ?? v.name ?? v.option1 ?? '';
+                // 排除電商系統自動產生的行銷/滿減/說明用的假變數
+                const isJunk = JUNK_KEYWORDS.test(title) || (title.startsWith('[') && title.includes('/'));
+                return !isJunk;
+            })
+            .slice(0, 100)
+            .map(v => {
+                let varImage = v.featured_image?.src ?? v.image?.src ?? v.image ?? '';
+                if (!varImage && v.image_id) {
+                    const matchedImg = imagesList.find(img => img.id === v.image_id);
+                    if (matchedImg) varImage = matchedImg.src;
+                }
+                return {
+                    spec: v.title ?? v.name ?? v.option1 ?? '',
+                    price: typeof v.price === 'number' ? (v.price > 10000 && v.price % 100 === 0 ? v.price / 100 : v.price) : parseFloat(v.price ?? 0),
+                    currency,
+                    sku: v.sku ?? v.id ?? '',
+                    available: v.available ?? true,
+                    image: varImage,
+                };
+            });
     })();
 
     return { title, price: priceNum, currency, image, variants };

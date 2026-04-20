@@ -1,20 +1,17 @@
-# 使用 Playwright 官方提供的 Linux 環境，內建所有瀏覽器依賴
-FROM mcr.microsoft.com/playwright:v1.59.1-jammy
+FROM node:20.10.0-bookworm
 
-# 設定工作目錄
 WORKDIR /app
 
-# 複製 package.json 與 package-lock.json
+# 複製 package.json 先安裝套件
 COPY package*.json ./
-
-# 安裝 Node 套件
 RUN npm install
+
+# 讓 Playwright 自動完整安裝它需要的系統依賴與 Chromium 瀏覽器
+RUN npx playwright install --with-deps chromium
 
 # 複製所有代碼
 COPY . .
 
-# 暴露連接埠
+# 暴露服務埠號
 EXPOSE 4000
-
-# 啟動伺服器
 CMD ["npm", "start"]

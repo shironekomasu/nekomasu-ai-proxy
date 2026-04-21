@@ -1,18 +1,10 @@
 // ─── proxy-engine/services/smart-scraper/tier1-intercept.js ───
 // 🏆 第一階：攔截底層狀態與 API (成本 $0)
-// 策略：在任何 HTML 渲染前，優先從 SSR 狀態 (NEXT_DATA, Shopify, Nuxt)
-// 以及 XHR/Fetch 網路攔截中提取結構化 JSON 資料。
 
 'use strict';
 
-/**
- * 解析 SSR 嵌入狀態（免費，不需 AI）
- * @param {string} html - 原始 HTML 字串
- * @returns {object|null} 解析出的商品資料，或 null
- */
 function parseSSRState(html) {
     const results = {};
-
     // --- Next.js: <script id="__NEXT_DATA__"> ---
     const nextDataMatch = html.match(/<script[^>]+id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i);
     if (nextDataMatch) {
@@ -20,7 +12,6 @@ function parseSSRState(html) {
             const nextData = JSON.parse(nextDataMatch[1]);
             results.source = 'next_data';
             results.raw = nextData;
-            // 深層搜尋 price / variants
             results.product = deepFindProduct(nextData);
             if (results.product) {
                 console.log('[Tier1] ✅ Found data in __NEXT_DATA__');
@@ -56,12 +47,10 @@ function parseSSRState(html) {
     if (shopifyMatch) {
         try {
             const jsonStr = shopifyMatch[1];
-            // 由於可能含有未加引號的鍵，嘗試用 Function 或 eval
             const shopifyMeta = (new Function('return ' + jsonStr))();
             results.source = 'shopify_meta';
             results.raw = shopifyMeta;
 
-            // Shopify 有時候把 currency 放在 meta 最外層
             const currency = shopifyMeta.currency || shopifyMeta.priceCurrency;
 
             results.product = deepFindProduct(shopifyMeta);
@@ -114,9 +103,6 @@ function parseSSRState(html) {
     return null;
 }
 
-/**
- * XHR / Fetch 攔截器 - 在 Playwright 頁面中掛載，等待 API 回應
- */
 async function interceptNetworkAPIs(page, targetUrl = '') {
     return new Promise((resolve) => {
         let targetSlug = '';
@@ -152,7 +138,6 @@ async function interceptNetworkAPIs(page, targetUrl = '') {
                     if (vCount > maxVariants) {
                         maxVariants = vCount;
                         bestProduct = { source: 'xhr_intercept', url, product };
-                        // 若抓到含有超過 1 個規格的資料庫，那絕對是真的主商品，直接採納以節省時間
                         if (vCount > 1) {
                             console.log(`[Tier1] ✅ XHR intercepted (Has ${vCount} variants!): ${url.substring(0, 80)}`);
                             clearTimeout(timeout);
@@ -171,25 +156,15 @@ async function interceptNetworkAPIs(page, targetUrl = '') {
                     clearTimeout(timeout);
                     resolve(bestProduct);
                 }
-            }, 1500); // 網頁載入後多等一下 XHR
+            }, 1500);
         });
     });
 }
 
-// ──────────────────────────────────────────────
-// 內部工具函式
-// ──────────────────────────────────────────────
-
-/**
- * 遞迴深層搜尋物件/陣列，尋找含有 price 或 variants 的商品節點
- */
 function deepFindProduct(obj, depth = 0) {
     if (depth > 8 || !obj || typeof obj !== 'object') return null;
-
-    // 直接命中：判斷此層物件是否為商品
     if (isProductObject(obj)) return normalizeProduct(obj);
 
-    // 遞迴搜尋
     const values = Array.isArray(obj) ? obj : Object.values(obj);
     for (const val of values) {
         if (typeof val === 'object' && val !== null) {
@@ -197,7 +172,6 @@ function deepFindProduct(obj, depth = 0) {
             if (found) return found;
         }
     }
-
     return null;
 }
 
@@ -208,16 +182,14 @@ function isProductObject(obj) {
     const hasName = keys.some(k => ['title', 'name', 'product_name', 'handle'].includes(k));
     const hasPrice = keys.some(k => ['price', 'current_price', 'sale_price', 'price_min'].includes(k));
     const hasVariants = keys.includes('variants') && Array.isArray(obj.variants || obj.Variants);
-
     return hasName && (hasPrice || hasVariants);
 }
 
 function normalizeProduct(obj) {
-    // 嘗試找到最具代表性的價格欄位 (含稅、最終、最低)
     const priceRaw = obj.price ?? obj.current_price ?? obj.sale_price ?? obj.price_min ?? obj.finalPrice ?? 0;
     const priceNum = typeof priceRaw === 'string'
         ? parseFloat(priceRaw.replace(/[^0-9.]/g, ''))
-        : (typeof priceRaw === 'number' && priceRaw > 100 ? priceRaw / 100 : priceRaw); // Shopify 用分為單位
+        : (typeof priceRaw === 'number' && priceRaw > 100 ? priceRaw / 100 : priceRaw);
 
     const currency = obj.currency ?? obj.priceCurrency ?? obj.price_currency ?? 'UNKNOWN';
     const title = obj.title ?? obj.name ?? obj.product_name ?? '';
@@ -225,7 +197,6 @@ function normalizeProduct(obj) {
 
     const imagesList = Array.isArray(obj.images) ? obj.images : [];
 
-    // 建立合法屬性註冊表 (提取自母商品定義)
     let validOptionValues = null;
     if (Array.isArray(obj.options) && obj.options.length > 0) {
         validOptionValues = new Set();
@@ -249,17 +220,15 @@ function normalizeProduct(obj) {
 
                 if (title === 'Default Title') return false;
 
-                // 強制攔截：只要包含行銷字眼的括號標籤，或是明顯的滿減公式，一律視為假規格
+                // 🌟 只留最純淨的電商行銷過濾
                 const isPromo = /\[.*(折扣|滿.*折|加碼|說明|最高折|優惠|贈品|免運|促銷|活動|購物金).*\]/i.test(title) || /(滿\d+折\d+|折價券|折扣碼)/i.test(title);
                 if (isPromo) return false;
 
-                // 結構比對：如果變數中攜帶的 option (1/2/3) 並未註冊在母商品的 UI 屬性中，視為隱藏變數
                 if (validOptionValues) {
                     if (v.option1 && !validOptionValues.has(v.option1)) return false;
                     if (v.option2 && !validOptionValues.has(v.option2)) return false;
                     if (v.option3 && !validOptionValues.has(v.option3)) return false;
                 } else {
-                    // 備用防線
                     if (/^\[.*\]$/.test(title) && title.includes('/')) return false;
                 }
 

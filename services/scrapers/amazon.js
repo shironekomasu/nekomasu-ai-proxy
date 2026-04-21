@@ -30,25 +30,44 @@ async function scrape(url, selectedOptions = []) {
         else if (cleanUrl.includes('.de')) countryCode = 'de';
         else if (cleanUrl.includes('.co.uk')) countryCode = 'gb';
 
-        // 💡 黑魔法 2：加上 premium=true，強迫 ScraperAPI 使用「真實家庭住宅 IP」去撞 Amazon
-        const proxyUrl = `http://api.scraperapi.com/?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(cleanUrl)}&premium=true&country_code=${countryCode}`;
+        // 💡 黑魔法 2：加上 premium=true (強制住宅IP) 與 render=true (模擬瀏覽器)
+        const proxyUrl = `http://api.scraperapi.com/?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(cleanUrl)}&premium=true&country_code=${countryCode}&render=true`;
 
-        console.log(`[Amazon Scraper] 🚀 發送高匿蹤請求...`);
-
+        let html = '';
         let response;
-        try {
-            // 給予 15 秒的時間，不行就馬上重試切換 IP
-            response = await axios.get(proxyUrl, { timeout: 15000 });
-        } catch (err) {
-            if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
-                console.log(`[Amazon Scraper] ⏳ 節點回應太慢，自動切換高匿蹤 IP 重新撞擊...`);
-                response = await axios.get(proxyUrl, { timeout: 15000 });
-            } else {
-                throw err;
+
+        // 💡 黑魔法加強：驗證碼辨識與 3 連擊自動換 IP 系統
+        for (let i = 1; i <= 3; i++) {
+            try {
+                console.log(`[Amazon Scraper] 🚀 發送高匿蹤請求 (第 ${i}/3 次嘗試)...`);
+                // 每次給 25 秒，不浪費時間在死胡同裡
+                response = await axios.get(proxyUrl, { timeout: 25000 });
+                html = response.data;
+
+                // 🚨 驗證碼雷達：快速掃描網頁原始碼，確認是不是被擋在 CAPTCHA 牆外
+                const isCaptcha = html.includes('Type the characters you see in this image') ||
+                    html.includes('api-services-support@amazon.com') ||
+                    (!html.includes('productTitle') && !html.includes('title'));
+
+                if (isCaptcha) {
+                    console.warn(`[Amazon Scraper] ⚠️ 第 ${i} 次撞到驗證碼牆 (CAPTCHA)，自動切換全新 IP 重新撞擊...`);
+                    if (i === 3) throw new Error('連續 3 次被 Amazon 驗證碼阻擋，代理節點全滅');
+                    continue; // 觸發下一次迴圈 (ScraperAPI 會自動換 IP)
+                }
+
+                console.log(`[Amazon Scraper] 🔓 成功繞過防護牆，開始解析商品資料...`);
+                break; // 成功繞過，跳出迴圈
+
+            } catch (err) {
+                if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
+                    console.warn(`[Amazon Scraper] ⏳ 第 ${i} 次連線太慢，自動切換 IP...`);
+                    if (i === 3) throw new Error('連續 3 次 Proxy 節點超時');
+                } else {
+                    if (i === 3) throw err; // 其他嚴重錯誤直接拋出
+                }
             }
         }
 
-        const html = response.data;
         const $ = cheerio.load(html);
 
         // 1. 萃取標題

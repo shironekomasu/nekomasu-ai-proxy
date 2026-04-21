@@ -106,6 +106,62 @@ async function scrape(url, selectedOptions = []) {
 
         console.log(`[Amazon Scraper] ✅ 成功取得資料: ${title.substring(0, 30)}... | 價格: ${price} ${currency}`);
 
+        // 💡 黑魔法 5：暴力破解 Amazon Twister (變體選項)
+        const availableVariants = {};
+
+        $('#twister > .a-section, #twisterContainer .a-section, #twister .a-row').each((i, el) => {
+            // 找維度名稱 (例如 "Color:", "Size:")
+            let dimName = $(el).find('label.a-form-label').text().replace(/:/g, '').trim();
+            if (!dimName) dimName = $(el).find('.a-color-secondary').first().text().replace(/:/g, '').trim();
+
+            if (dimName) {
+                const options = [];
+
+                // 類型 A: 按鈕清單 (尋找 <ul> <li>)
+                $(el).find('ul li').each((j, li) => {
+                    let optVal = $(li).attr('title'); // 通常長這樣："Click to select White"
+                    if (optVal) {
+                        optVal = optVal.replace(/^Click to select /i, '').trim();
+                    } else {
+                        // 備用方案：抓裡面的文字
+                        optVal = $(li).find('.a-size-base').text().trim() || $(li).text().trim();
+                    }
+
+                    // 清洗文字，去掉換行符號
+                    optVal = optVal.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+
+                    // 過濾掉空值或太長的奇怪字串
+                    if (optVal && !options.includes(optVal) && optVal.length < 30) {
+                        options.push(optVal);
+                    }
+                });
+
+                // 類型 B: 下拉選單 (尋找 <select> <option>)
+                $(el).find('select option').each((j, opt) => {
+                    const optVal = $(opt).text().trim();
+                    if (optVal && optVal !== 'Select' && !options.includes(optVal) && optVal.length < 30) {
+                        options.push(optVal);
+                    }
+                });
+
+                if (options.length > 0) {
+                    availableVariants[dimName] = options;
+                }
+            }
+        });
+
+        const needsVariant = Object.keys(availableVariants).length > 0;
+        if (needsVariant) {
+            console.log(`[Amazon Scraper] 📦 發現多規格商品！維度: ${Object.keys(availableVariants).join(', ')}`);
+        }
+
+        if (!title || price === 0) {
+            throw new Error('解析失敗：可能被要求輸入驗證碼，或版面已變更');
+        }
+
+        console.log(`[Amazon Scraper] ✅ 成功取得資料: ${title.substring(0, 30)}... | 價格: ${price} ${currency}`);
+
+        // 整理傳回結果
         return {
             productInfo: {
                 source: 'amazon_proxy_scraper_v2',
@@ -115,14 +171,16 @@ async function scrape(url, selectedOptions = []) {
                 image: image || '',
                 variants: [],
             },
-            availableVariants: {},
+            // 🚨 關鍵：告訴前端這個商品需要選規格！
+            needsVariantSelection: needsVariant,
+            availableVariants: availableVariants,
             seoMeta: {}
         };
 
     } catch (error) {
         const status = error.response ? error.response.status : 'N/A';
         console.warn(`[Amazon Scraper] ⚠️ 抓取失敗 (Status: ${status}): ${error.message}`);
-        throw error; // 退回給 Router 的防護網
+        throw error;
     }
 }
 

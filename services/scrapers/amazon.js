@@ -107,48 +107,52 @@ async function scrape(url, selectedOptions = []) {
         console.log(`[Amazon Scraper] ✅ 成功取得資料: ${title.substring(0, 30)}... | 價格: ${price} ${currency}`);
 
         // 💡 黑魔法 5：暴力破解 Amazon Twister (變體選項)
-        const availableVariants = {};
+        let availableVariants = {};
 
-        $('#twister > .a-section, #twisterContainer .a-section, #twister .a-row').each((i, el) => {
-            // 找維度名稱 (例如 "Color:", "Size:")
-            let dimName = $(el).find('label.a-form-label').text().replace(/:/g, '').trim();
-            if (!dimName) dimName = $(el).find('.a-color-secondary').first().text().replace(/:/g, '').trim();
+        // 策略 A: 從 Amazon 內建的 JSON 變數暴力掃描 (最準確，無視 HTML 排版)
+        const variationMatch = html.match(/"variationValues"\s*:\s*({[^}]+})/);
+        if (variationMatch) {
+            try {
+                const rawVars = JSON.parse(variationMatch[1]);
+                for (const key in rawVars) {
+                    // Amazon 的 key 通常叫 "color_name", "size_name"，我們把它變大寫
+                    const cleanKey = key.replace(/_name$/, '').toUpperCase();
+                    availableVariants[cleanKey] = rawVars[key];
+                }
+            } catch (e) {
+                console.warn('[Amazon Scraper] 解析 variationValues 失敗');
+            }
+        }
 
-            if (dimName) {
+        // 策略 B: 如果 JSON 沒找到，降級使用更寬鬆的 DOM 掃描 (涵蓋手機、服飾等不同排版)
+        if (Object.keys(availableVariants).length === 0) {
+            $('#twister .a-row, #twisterContainer .a-section, #variation_color_name, #variation_size_name').each((i, el) => {
+                let dimName = $(el).find('label.a-form-label, .a-color-secondary').first().text().replace(/:/g, '').trim();
+                if (!dimName) return; // 沒標題就跳過
+
                 const options = [];
+                $(el).find('li, option').each((j, opt) => {
+                    let optVal = $(opt).attr('title') || $(opt).attr('value') || $(opt).text();
+                    optVal = optVal.replace(/^Click to select /i, '').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
 
-                // 類型 A: 按鈕清單 (尋找 <ul> <li>)
-                $(el).find('ul li').each((j, li) => {
-                    let optVal = $(li).attr('title'); // 通常長這樣："Click to select White"
-                    if (optVal) {
-                        optVal = optVal.replace(/^Click to select /i, '').trim();
-                    } else {
-                        // 備用方案：抓裡面的文字
-                        optVal = $(li).find('.a-size-base').text().trim() || $(li).text().trim();
-                    }
-
-                    // 清洗文字，去掉換行符號
-                    optVal = optVal.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-
-                    // 過濾掉空值或太長的奇怪字串
-                    if (optVal && !options.includes(optVal) && optVal.length < 30) {
-                        options.push(optVal);
-                    }
-                });
-
-                // 類型 B: 下拉選單 (尋找 <select> <option>)
-                $(el).find('select option').each((j, opt) => {
-                    const optVal = $(opt).text().trim();
-                    if (optVal && optVal !== 'Select' && !options.includes(optVal) && optVal.length < 30) {
+                    // 過濾掉無效字串
+                    if (optVal && optVal !== 'Select' && optVal !== '-1' && optVal.length < 40) {
                         options.push(optVal);
                     }
                 });
 
                 if (options.length > 0) {
-                    availableVariants[dimName] = options;
+                    availableVariants[dimName] = [...new Set(options)];
                 }
+            });
+        }
+
+        // 清理可能誤抓的空屬性
+        for (const key in availableVariants) {
+            if (!availableVariants[key] || availableVariants[key].length === 0) {
+                delete availableVariants[key];
             }
-        });
+        }
 
         const needsVariant = Object.keys(availableVariants).length > 0;
         if (needsVariant) {
@@ -171,7 +175,6 @@ async function scrape(url, selectedOptions = []) {
                 image: image || '',
                 variants: [],
             },
-            // 🚨 關鍵：告訴前端這個商品需要選規格！
             needsVariantSelection: needsVariant,
             availableVariants: availableVariants,
             seoMeta: {}

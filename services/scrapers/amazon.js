@@ -10,8 +10,21 @@ async function scrape(url, selectedOptions = []) {
         const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY || '你的免費API_KEY';
         const proxyUrl = `http://api.scraperapi.com/?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(url)}`;
 
-        // 因為 Proxy API 已經幫我們處理好所有 IP 輪替和反爬蟲破解，所以 Header 甚至可以不用帶！
-        const response = await axios.get(proxyUrl, { timeout: 25000 });
+        // 加入「超時自動換節點重試」機制
+        let response;
+        try {
+            // 第一次嘗試：給 15 秒。如果分到慢的 IP 就快刀斬亂麻
+            response = await axios.get(proxyUrl, { timeout: 15000 });
+        } catch (err) {
+            // 如果是超時錯誤，立刻觸發重試
+            if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
+                console.log(`[Amazon Scraper] ⏳ 代理節點回應太慢，自動切換 IP 重新發送請求...`);
+                // 第二次嘗試：再給 15 秒，ScraperAPI 會自動分派一個全新的乾淨 IP
+                response = await axios.get(proxyUrl, { timeout: 15000 });
+            } else {
+                throw err; // 如果是 401 或其他錯誤，直接拋出
+            }
+        }
 
         const html = response.data;
         const $ = cheerio.load(html);

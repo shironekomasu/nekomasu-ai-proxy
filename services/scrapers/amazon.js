@@ -2,62 +2,113 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 
+/**
+ * 💡 黑魔法 1：暴力清洗網址 (URL Cleansing)
+ * Amazon 網址只要有 /dp/ 後面的 10 碼 ASIN (商品編號) 就能訪問。
+ * 我們把後面幾百個字的追蹤碼全部砍掉，這樣 Amazon 就無法追蹤這是不是機器人！
+ */
+function cleanAmazonUrl(rawUrl) {
+    const match = rawUrl.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
+    if (match) {
+        const parsed = new URL(rawUrl);
+        return `https://${parsed.hostname}/dp/${match[1]}`;
+    }
+    return rawUrl; // 如果找不到 ASIN，才用原網址
+}
+
 async function scrape(url, selectedOptions = []) {
-    console.log(`[Amazon Scraper] ⚡ 透過 Proxy API 抓取: ${url}`);
+    const cleanUrl = cleanAmazonUrl(url);
+    console.log(`[Amazon Scraper] ⚡ 暴力瘦身網址: ${cleanUrl}`);
 
     try {
-        // 🚨 秘密武器：將原本直接打 Amazon 的網址，交給 ScraperAPI 代發
-        const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY || '你的免費API_KEY';
-        const proxyUrl = `http://api.scraperapi.com/?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(url)}`;
+        const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY;
+        if (!SCRAPER_API_KEY) throw new Error('Missing Proxy API Key');
 
-        // 加入「超時自動換節點重試」機制
+        // 判斷國家代碼，讓 Proxy 派發當地的 IP，成功率大增
+        let countryCode = 'us';
+        if (cleanUrl.includes('.co.jp')) countryCode = 'jp';
+        else if (cleanUrl.includes('.de')) countryCode = 'de';
+        else if (cleanUrl.includes('.co.uk')) countryCode = 'gb';
+
+        // 💡 黑魔法 2：加上 premium=true，強迫 ScraperAPI 使用「真實家庭住宅 IP」去撞 Amazon
+        const proxyUrl = `http://api.scraperapi.com/?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(cleanUrl)}&premium=true&country_code=${countryCode}`;
+
+        console.log(`[Amazon Scraper] 🚀 發送高匿蹤請求...`);
+
         let response;
         try {
-            // 第一次嘗試：給 15 秒。如果分到慢的 IP 就快刀斬亂麻
+            // 給予 15 秒的時間，不行就馬上重試切換 IP
             response = await axios.get(proxyUrl, { timeout: 15000 });
         } catch (err) {
-            // 如果是超時錯誤，立刻觸發重試
             if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
-                console.log(`[Amazon Scraper] ⏳ 代理節點回應太慢，自動切換 IP 重新發送請求...`);
-                // 第二次嘗試：再給 15 秒，ScraperAPI 會自動分派一個全新的乾淨 IP
+                console.log(`[Amazon Scraper] ⏳ 節點回應太慢，自動切換高匿蹤 IP 重新撞擊...`);
                 response = await axios.get(proxyUrl, { timeout: 15000 });
             } else {
-                throw err; // 如果是 401 或其他錯誤，直接拋出
+                throw err;
             }
         }
 
         const html = response.data;
         const $ = cheerio.load(html);
 
-        // --- 以下的解析邏輯完全不變 ---
-        const title = $('#productTitle').text().trim() || $('#title').text().trim();
+        // 1. 萃取標題
+        let title = $('#productTitle').text().trim() || $('#title').text().trim();
+        if (!title) {
+            // 如果 DOM 被改了，用 title 標籤暴力拆解
+            title = $('title').text().replace('Amazon.com:', '').replace('Amazon.co.jp:', '').trim();
+        }
+
+        // 💡 黑魔法 3：多重暴力萃取價格 (Amazon DOM 結構極度多變)
         let priceRaw =
             $('.priceToPay span.a-offscreen').first().text().trim() ||
             $('#corePriceDisplay_desktop_feature_div .a-price-whole').first().text().trim() ||
+            $('#corePrice_feature_div .a-offscreen').first().text().trim() ||
             $('#priceblock_ourprice').text().trim() ||
+            $('#priceblock_dealprice').text().trim() ||
             $('.a-color-price').first().text().trim();
 
         let price = 0;
-        if (priceRaw) price = parseFloat(priceRaw.replace(/[^0-9.]/g, ''));
 
+        if (priceRaw) {
+            // 清理文字，只保留數字和少數小數點
+            price = parseFloat(priceRaw.replace(/[^0-9.]/g, ''));
+        }
+
+        // 💡 黑魔法 4：如果 DOM 抓不到價格，直接用 Regex 掃描網頁底層的隱藏變數庫
+        if (price === 0) {
+            const priceMatch = html.match(/"priceAmount":\s*([\d.]+)/) ||
+                html.match(/"price":\s*([\d.]+)/) ||
+                html.match(/data-asin-price="([\d.]+)"/);
+            if (priceMatch) {
+                price = parseFloat(priceMatch[1]);
+                console.log(`[Amazon Scraper] ⚠️ DOM 解析失敗，透過底層 Regex 暴力抓出價格: ${price}`);
+            }
+        }
+
+        // 判斷幣種 (優先從網頁顯示判斷，否則從網址推斷)
         let currency = 'USD';
         if (/NT\$|TWD|NTD/.test(priceRaw)) currency = 'TWD';
-        else if (/¥|JPY|円/.test(priceRaw)) currency = 'JPY';
-        else if (url.includes('amazon.co.jp')) currency = 'JPY';
+        else if (/¥|JPY|円/.test(priceRaw) || cleanUrl.includes('.co.jp')) currency = 'JPY';
+        else if (/€|EUR/.test(priceRaw) || cleanUrl.includes('.de')) currency = 'EUR';
+        else if (/£|GBP/.test(priceRaw) || cleanUrl.includes('.co.uk')) currency = 'GBP';
 
+        // 萃取圖片
         let image = $('#landingImage').attr('data-old-hires') || $('#landingImage').attr('src');
         if (!image) {
+            // 暴力搜尋底層的圖片陣列
             const imgMatch = html.match(/"large":"(https:\/\/[^"]+)"/);
             if (imgMatch) image = imgMatch[1];
         }
 
-        if (!title || price === 0) throw new Error('解析失敗 (可能版面變更或依然被擋)');
+        if (!title || price === 0) {
+            throw new Error('解析失敗：可能被要求輸入驗證碼，或版面已變更');
+        }
 
         console.log(`[Amazon Scraper] ✅ 成功取得資料: ${title.substring(0, 30)}... | 價格: ${price} ${currency}`);
 
         return {
             productInfo: {
-                source: 'amazon_proxy_scraper',
+                source: 'amazon_proxy_scraper_v2',
                 title: title,
                 original_price: price,
                 original_currency: currency,
@@ -69,10 +120,9 @@ async function scrape(url, selectedOptions = []) {
         };
 
     } catch (error) {
-        // 攔截並印出 Axios 的狀態碼，方便知道是不是 Proxy 也被擋了
         const status = error.response ? error.response.status : 'N/A';
         console.warn(`[Amazon Scraper] ⚠️ 抓取失敗 (Status: ${status}): ${error.message}`);
-        throw error; // 退回給 Router 的 Playwright 處理
+        throw error; // 退回給 Router 的防護網
     }
 }
 

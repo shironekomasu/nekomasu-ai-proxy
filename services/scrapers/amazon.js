@@ -4,7 +4,6 @@ const cheerio = require('cheerio');
 
 /**
  * 💡 黑魔法 1：暴力清洗網址 (URL Cleansing)
- * 移除 Amazon 網址後方追蹤碼，降低被防爬蟲機制鎖定的機率。
  */
 function cleanAmazonUrl(rawUrl) {
     const match = rawUrl.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
@@ -16,24 +15,27 @@ function cleanAmazonUrl(rawUrl) {
 }
 
 /**
- * 💡 核心外掛：精準 JSON 括號配對解析器
- * 專門對付 Amazon 深層巢狀的 JSON，比 Regex 穩定 100 倍
+ * 💡 核心外掛加強版：支援 HTML 解碼的 JSON 提取器
+ * 能識破 Amazon 用 &quot; 隱藏起來的深層資料
  */
 function extractAmazonJSON(htmlStr, keyword) {
+    // 🚨 關鍵破解：將 HTML 編碼的引號全部還原，讓隱藏的 JSON 現形！
+    const unescapedHtml = htmlStr.replace(/&quot;/g, '"').replace(/&#34;/g, '"');
+
     const regex = new RegExp(`"${keyword}"\\s*:\\s*(\\{|\\[)`);
-    const match = htmlStr.match(regex);
+    const match = unescapedHtml.match(regex);
     if (!match) return null;
 
     const startIndex = match.index + match[0].length - 1;
-    const startChar = htmlStr[startIndex];
+    const startChar = unescapedHtml[startIndex];
     const endChar = startChar === '{' ? '}' : ']';
 
     let count = 0;
     let inString = false;
     let escapeNext = false;
 
-    for (let i = startIndex; i < htmlStr.length; i++) {
-        const char = htmlStr[i];
+    for (let i = startIndex; i < unescapedHtml.length; i++) {
+        const char = unescapedHtml[i];
         if (escapeNext) { escapeNext = false; continue; }
         if (char === '\\') { escapeNext = true; continue; }
         if (char === '"') { inString = !inString; continue; }
@@ -44,7 +46,7 @@ function extractAmazonJSON(htmlStr, keyword) {
 
             if (count === 0) {
                 try {
-                    return JSON.parse(htmlStr.substring(startIndex, i + 1));
+                    return JSON.parse(unescapedHtml.substring(startIndex, i + 1));
                 } catch (e) {
                     return null;
                 }
@@ -77,11 +79,9 @@ async function scrape(url, selectedOptions = []) {
         for (let i = 1; i <= 3; i++) {
             try {
                 console.log(`[Amazon Scraper] 🚀 發送高匿蹤請求 (第 ${i}/3 次嘗試)...`);
-                // 每次給 25 秒，不浪費時間在死胡同裡
                 response = await axios.get(proxyUrl, { timeout: 25000 });
                 html = response.data;
 
-                // 🚨 驗證碼雷達：快速掃描網頁原始碼，確認是不是被擋在 CAPTCHA 牆外
                 const isCaptcha = html.includes('Type the characters you see in this image') ||
                     html.includes('api-services-support@amazon.com') ||
                     (!html.includes('productTitle') && !html.includes('title'));
@@ -89,18 +89,18 @@ async function scrape(url, selectedOptions = []) {
                 if (isCaptcha) {
                     console.warn(`[Amazon Scraper] ⚠️ 第 ${i} 次撞到驗證碼牆 (CAPTCHA)，自動切換全新 IP 重新撞擊...`);
                     if (i === 3) throw new Error('連續 3 次被 Amazon 驗證碼阻擋，代理節點全滅');
-                    continue; // 觸發下一次迴圈 (ScraperAPI 會自動換 IP)
+                    continue;
                 }
 
                 console.log(`[Amazon Scraper] 🔓 成功繞過防護牆，開始解析商品資料...`);
-                break; // 成功繞過，跳出迴圈
+                break;
 
             } catch (err) {
                 if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
                     console.warn(`[Amazon Scraper] ⏳ 第 ${i} 次連線太慢，自動切換 IP...`);
                     if (i === 3) throw new Error('連續 3 次 Proxy 節點超時');
                 } else {
-                    if (i === 3) throw err; // 其他嚴重錯誤直接拋出
+                    if (i === 3) throw err;
                 }
             }
         }
@@ -155,47 +155,94 @@ async function scrape(url, selectedOptions = []) {
         let availableVariants = {};
         const hostname = new URL(cleanUrl).hostname;
 
-        // 引擎 A: JSON 外科手術切除術 (一次性抓出所有隱藏組合)
+        // 引擎 A+: 掃描 Amazon 特有的 data-a-state 隱藏狀態區塊 (最強大的破解點)
         try {
-            const dimensions = extractAmazonJSON(html, 'dimensionsDisplay');
-            const varValues = extractAmazonJSON(html, 'variationValues');
-            const dimToAsin = extractAmazonJSON(html, 'dimensionValuesDisplayData');
+            $('[data-a-state]').each((i, el) => {
+                try {
+                    const stateStr = $(el).attr('data-a-state') || '{}';
+                    const stateObj = JSON.parse(stateStr);
 
-            if (dimensions && varValues && dimToAsin) {
-                // 整理可選維度給前端
-                for (const key in varValues) {
-                    const cleanKey = key.replace(/_name$/, '').toUpperCase();
-                    availableVariants[cleanKey] = varValues[key];
-                }
+                    if (stateObj && stateObj.dimensionValuesDisplayData) {
+                        const dimensions = stateObj.dimensionsDisplay || [];
+                        const varValues = stateObj.variationValues || {};
+                        const dimToAsin = stateObj.dimensionValuesDisplayData || {};
 
-                // 展開所有 ASIN
-                for (const [asin, comboIndices] of Object.entries(dimToAsin)) {
-                    let specParts = [];
-                    dimensions.forEach((dimKey, i) => {
-                        const valIndex = parseInt(comboIndices[i], 10);
-                        if (varValues[dimKey] && varValues[dimKey][valIndex]) {
-                            specParts.push(varValues[dimKey][valIndex]);
+                        for (const key in varValues) {
+                            const cleanKey = key.replace(/_name$/, '').toUpperCase();
+                            availableVariants[cleanKey] = varValues[key];
                         }
-                    });
 
-                    if (specParts.length > 0) {
-                        exactVariants.push({
-                            sku: asin,
-                            spec: specParts.join(' / '),
-                            url: `https://${hostname}/dp/${asin}`,
-                            price: price, // 基礎參考價
-                            currency: currency,
-                            image: image
-                        });
+                        for (const [asin, comboIndices] of Object.entries(dimToAsin)) {
+                            let specParts = [];
+                            dimensions.forEach((dimKey, idx) => {
+                                const valIndex = parseInt(comboIndices[idx], 10);
+                                if (varValues[dimKey] && varValues[dimKey][valIndex]) {
+                                    specParts.push(varValues[dimKey][valIndex]);
+                                }
+                            });
+
+                            if (specParts.length > 0) {
+                                exactVariants.push({
+                                    sku: asin,
+                                    spec: specParts.join(' / '),
+                                    url: `https://${hostname}/dp/${asin}`,
+                                    price: price,
+                                    currency: currency,
+                                    image: image
+                                });
+                            }
+                        }
+                        console.log(`[Amazon Scraper] 🎯 隱藏狀態 (data-a-state) 解碼成功！找出 ${exactVariants.length} 個 ASIN！`);
                     }
+                } catch (err) {
+                    // JSON 解析失敗忽略，繼續找下一個區塊
                 }
-                console.log(`[Amazon Scraper] 🎯 JSON 手術成功！完美提取出 ${exactVariants.length} 個隱藏的 ASIN 組合！`);
-            }
+            });
         } catch (e) {
-            console.warn('[Amazon Scraper] JSON 提取失敗:', e.message);
+            console.warn('[Amazon Scraper] 隱藏狀態掃描失敗:', e.message);
         }
 
-        // 引擎 B: 備用 DOM 掃描 (萬一 JSON 不存在，才使用掃描實體按鈕)
+        // 引擎 A: JSON 外科手術切除術 (處理傳統版面配置的腳本)
+        if (exactVariants.length === 0) {
+            try {
+                const dimensions = extractAmazonJSON(html, 'dimensionsDisplay');
+                const varValues = extractAmazonJSON(html, 'variationValues');
+                const dimToAsin = extractAmazonJSON(html, 'dimensionValuesDisplayData');
+
+                if (dimensions && varValues && dimToAsin) {
+                    for (const key in varValues) {
+                        const cleanKey = key.replace(/_name$/, '').toUpperCase();
+                        availableVariants[cleanKey] = varValues[key];
+                    }
+
+                    for (const [asin, comboIndices] of Object.entries(dimToAsin)) {
+                        let specParts = [];
+                        dimensions.forEach((dimKey, idx) => {
+                            const valIndex = parseInt(comboIndices[idx], 10);
+                            if (varValues[dimKey] && varValues[dimKey][valIndex]) {
+                                specParts.push(varValues[dimKey][valIndex]);
+                            }
+                        });
+
+                        if (specParts.length > 0) {
+                            exactVariants.push({
+                                sku: asin,
+                                spec: specParts.join(' / '),
+                                url: `https://${hostname}/dp/${asin}`,
+                                price: price,
+                                currency: currency,
+                                image: image
+                            });
+                        }
+                    }
+                    console.log(`[Amazon Scraper] 🎯 JSON 手術成功！完美提取出 ${exactVariants.length} 個隱藏的 ASIN 組合！`);
+                }
+            } catch (e) {
+                console.warn('[Amazon Scraper] JSON 提取失敗:', e.message);
+            }
+        }
+
+        // 引擎 B: 備用 DOM 掃描 (萬一前兩招都被擋，才使用掃描實體按鈕)
         if (exactVariants.length === 0) {
             console.log(`[Amazon Scraper] ⚠️ 啟動引擎 B: DOM 實體按鈕掃描...`);
             const variantContainers = $('#twister_feature_div, #twister, #twisterContainer, #mobileTwisterContainer, [id^="variation_"]');
@@ -215,7 +262,12 @@ async function scrape(url, selectedOptions = []) {
                         options.push(optVal);
                         if (targetAsin) {
                             exactVariants.push({
-                                sku: targetAsin, spec: optVal, url: `https://${hostname}/dp/${targetAsin}`, price, currency, image
+                                sku: targetAsin,
+                                spec: optVal,
+                                url: `https://${hostname}/dp/${targetAsin}`,
+                                price,
+                                currency,
+                                image: $(el).find('img').attr('src') || image // 盡量抓小圖
                             });
                         }
                     }
@@ -223,15 +275,27 @@ async function scrape(url, selectedOptions = []) {
                 if (options.length > 0) availableVariants[dimName] = [...new Set(options)];
             });
 
-            // 智能合併
+            // 智能合併 (ASIN 一樣就合併規格字串)
             const uniqueMap = new Map();
             for (const v of exactVariants) {
                 if (uniqueMap.has(v.sku)) {
-                    if (!uniqueMap.get(v.sku).spec.includes(v.spec)) uniqueMap.get(v.sku).spec += ' / ' + v.spec;
-                } else uniqueMap.set(v.sku, v);
+                    if (!uniqueMap.get(v.sku).spec.includes(v.spec)) {
+                        uniqueMap.get(v.sku).spec += ' / ' + v.spec;
+                    }
+                    if (v.image && v.image !== image) uniqueMap.get(v.sku).image = v.image;
+                } else {
+                    uniqueMap.set(v.sku, v);
+                }
             }
             exactVariants = Array.from(uniqueMap.values());
             console.log(`[Amazon Scraper] 🎯 DOM 備用掃描完成，找出 ${exactVariants.length} 個 ASIN。`);
+        }
+
+        // 清除空的維度資料
+        for (const key in availableVariants) {
+            if (!availableVariants[key] || availableVariants[key].length === 0) {
+                delete availableVariants[key];
+            }
         }
 
         const needsVariant = Object.keys(availableVariants).length > 0 || exactVariants.length > 0;
@@ -241,10 +305,11 @@ async function scrape(url, selectedOptions = []) {
         }
 
         console.log(`[Amazon Scraper] ✅ 成功取得資料: ${title.substring(0, 30)}... | 價格: ${price} ${currency}`);
+        if (needsVariant) console.log(`[Amazon Scraper] 📦 最終整理出 ${exactVariants.length} 個獨立 ASIN 變體。`);
 
         return {
             productInfo: {
-                source: 'amazon_proxy_scraper_v5',
+                source: 'amazon_proxy_scraper_v6',
                 title: title,
                 original_price: price,
                 original_currency: currency,
@@ -259,7 +324,7 @@ async function scrape(url, selectedOptions = []) {
     } catch (error) {
         const status = error.response ? error.response.status : 'N/A';
         console.warn(`[Amazon Scraper] ⚠️ 抓取失敗 (Status: ${status}): ${error.message}`);
-        throw error; // 退回給 Router
+        throw error; // 退回給 Router 的防護網
     }
 }
 

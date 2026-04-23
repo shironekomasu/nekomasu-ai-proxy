@@ -125,94 +125,120 @@ async function scrape(url, selectedOptions = []) {
 
         console.log(`[Amazon Scraper] ✅ 成功取得資料: ${title.substring(0, 30)}... | 價格: ${price} ${currency}`);
 
-        // 💡 黑魔法 5：雙引擎破解 Amazon Twister (變體選項與專屬 ASIN)
+        // 💡 黑魔法 5：終極 Twister 解析器 (無差別 DOM 掃描 + ASIN 智能合併)
         let exactVariants = [];
         let availableVariants = {};
         const hostname = new URL(cleanUrl).hostname;
 
+        // 引擎 A: 隱藏腳本攔截 (攔截 Amazon 底層的 ASIN 陣列)
         try {
-            // 引擎 A: 嘗試從 JSON 變數精準挖掘 (處理標準版面)
-            const dimDisplayMatch = html.match(/"dimensionsDisplay"\s*:\s*(\[[^\]]+\])/);
-            const varValuesMatch = html.match(/"variationValues"\s*:\s*({[^}]+})/);
-            const dimValuesMatch = html.match(/"dimensionValuesDisplayData"\s*:\s*({[^}]+})/);
-
-            if (dimDisplayMatch && varValuesMatch && dimValuesMatch) {
-                const dimensions = JSON.parse(dimDisplayMatch[1]);
-                const varValues = JSON.parse(varValuesMatch[1]);
-                const dimToAsin = JSON.parse(dimValuesMatch[1]);
-
-                for (const key in varValues) {
-                    const cleanKey = key.replace(/_name$/, '').toUpperCase();
-                    availableVariants[cleanKey] = varValues[key];
+            let scriptData = '';
+            $('script').each((i, el) => {
+                const text = $(el).html();
+                if (text && text.includes('dimensionValuesDisplayData')) {
+                    scriptData += text;
                 }
+            });
 
-                for (const [asin, comboIndices] of Object.entries(dimToAsin)) {
-                    let specParts = [];
-                    dimensions.forEach((dimKey, i) => {
-                        const valIndex = parseInt(comboIndices[i], 10);
-                        if (varValues[dimKey] && varValues[dimKey][valIndex]) {
-                            specParts.push(varValues[dimKey][valIndex]);
-                        }
-                    });
+            if (scriptData) {
+                // 使用更具包容性的 Regex 來擷取整個 JSON 物件
+                const dimDisplayMatch = scriptData.match(/"dimensionsDisplay"\s*:\s*(\[[^\]]+\])/);
+                const varValuesMatch = scriptData.match(/"variationValues"\s*:\s*(\{.*?\})\s*,\s*"/);
+                const dimValuesMatch = scriptData.match(/"dimensionValuesDisplayData"\s*:\s*(\{.*?\})\s*,\s*"/);
 
-                    if (specParts.length > 0) {
-                        exactVariants.push({
-                            sku: asin,
-                            spec: specParts.join(' / '),
-                            url: `https://${hostname}/dp/${asin}`,
-                            price: price, // 基礎價，供前端顯示，點擊後會用專屬網址重抓
-                            currency: currency,
-                            image: image
-                        });
+                if (dimDisplayMatch && varValuesMatch && dimValuesMatch) {
+                    const dimensions = JSON.parse(dimDisplayMatch[1]);
+                    const varValues = JSON.parse(varValuesMatch[1]);
+                    const dimToAsin = JSON.parse(dimValuesMatch[1]);
+
+                    for (const key in varValues) {
+                        const cleanKey = key.replace(/_name$/, '').toUpperCase();
+                        availableVariants[cleanKey] = varValues[key];
                     }
-                }
-                console.log(`[Amazon Scraper] 🎯 JSON 解碼成功，找到 ${exactVariants.length} 個真實 ASIN！`);
-            }
-        } catch (e) {
-            console.warn('[Amazon Scraper] JSON 矩陣解析失敗，啟動備用引擎');
-        }
 
-        // 引擎 B: 如果 JSON 失敗，啟動 DOM 屬性強拆 (直接去按鈕上挖 ASIN)
-        if (exactVariants.length === 0) {
-            $('#twister .a-row, #twisterContainer .a-section, #variation_color_name, #variation_size_name').each((i, el) => {
-                let dimName = $(el).find('label.a-form-label, .a-color-secondary').first().text().replace(/:/g, '').trim();
-                if (!dimName) return;
+                    for (const [asin, comboIndices] of Object.entries(dimToAsin)) {
+                        let specParts = [];
+                        dimensions.forEach((dimKey, i) => {
+                            const valIndex = parseInt(comboIndices[i], 10);
+                            if (varValues[dimKey] && varValues[dimKey][valIndex]) {
+                                specParts.push(varValues[dimKey][valIndex]);
+                            }
+                        });
 
-                const options = [];
-                // 掃描一般按鈕
-                $(el).find('li').each((j, li) => {
-                    let optVal = $(li).attr('title') || $(li).find('.a-size-base').text() || $(li).text();
-                    optVal = optVal.replace(/^Click to select /i, '').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-
-                    // Amazon 通常把專屬 ASIN 藏在這些屬性裡
-                    let asin = $(li).attr('data-defaultasin');
-                    let dpUrl = $(li).attr('data-dp-url');
-
-                    if (optVal && optVal !== 'Select' && optVal !== '-1' && optVal.length < 40) {
-                        options.push(optVal);
-
-                        const targetAsin = asin || (dpUrl && (dpUrl.match(/\/dp\/([A-Z0-9]{10})/) || [])[1]);
-                        if (targetAsin) {
+                        if (specParts.length > 0) {
                             exactVariants.push({
-                                sku: targetAsin,
-                                spec: optVal, // 雖然可能只是單一維度名稱，但足以讓前端觸發重新報價
-                                url: `https://${hostname}/dp/${targetAsin}`,
+                                sku: asin,
+                                spec: specParts.join(' / '),
+                                url: `https://${hostname}/dp/${asin}`,
                                 price: price,
                                 currency: currency,
                                 image: image
                             });
                         }
                     }
-                });
+                    console.log(`[Amazon Scraper] 🎯 JSON 解碼成功，找到 ${exactVariants.length} 個真實 ASIN！`);
+                }
+            }
+        } catch (e) {
+            console.warn('[Amazon Scraper] JSON 矩陣解析失敗，啟動無差別掃描');
+        }
 
-                // 掃描下拉選單
-                $(el).find('select option').each((j, opt) => {
-                    let optVal = $(opt).text().replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-                    let valAttr = $(opt).attr('value');
+        // 引擎 B: 終極 DOM 掃描 (如果 JSON 沒抓到，直接強拆所有變體區塊)
+        if (exactVariants.length === 0) {
+            // 涵蓋 PC 版、Mobile 版、以及同捆包(Bundle)的常見變體容器
+            const variantContainers = $('#twister_feature_div, #twister, #twisterContainer, #mobileTwisterContainer, [id^="variation_"]');
+
+            variantContainers.each((i, container) => {
+                let dimName = $(container).find('label.a-form-label, .a-color-secondary').first().text().replace(/:/g, '').trim();
+                if (!dimName) {
+                    const id = $(container).attr('id') || '';
+                    if (id.includes('color')) dimName = 'Color';
+                    else if (id.includes('size')) dimName = 'Size';
+                    else if (id.includes('style')) dimName = 'Style';
+                    else dimName = 'Option';
+                }
+
+                const options = [];
+
+                // 掃描所有可能的按鈕 (li, div 等等)
+                $(container).find('li, .twister-item, .swatchAvailable').each((j, el) => {
+                    let optVal = $(el).attr('title') || $(el).attr('data-csa-c-item-title') || $(el).find('.a-size-base, .twisterTextDiv').text() || $(el).find('img').attr('alt') || $(el).text();
+                    optVal = optVal.replace(/^Click to select /i, '').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+
+                    // 無差別尋找 ASIN 網址
+                    let targetAsin = $(el).attr('data-defaultasin') || $(el).attr('data-csa-c-item-id');
+
+                    if (!targetAsin) {
+                        const dpUrl = $(el).attr('data-dp-url') || $(el).find('a').attr('href') || '';
+                        const urlMatch = dpUrl.match(/\/dp\/([A-Z0-9]{10})/);
+                        if (urlMatch) targetAsin = urlMatch[1];
+                    }
 
                     if (optVal && optVal !== 'Select' && optVal !== '-1' && optVal.length < 40) {
                         options.push(optVal);
-                        const targetAsin = (valAttr && (valAttr.match(/([A-Z0-9]{10})/) || [])[1]);
+
+                        if (targetAsin && targetAsin.length === 10) {
+                            exactVariants.push({
+                                sku: targetAsin,
+                                spec: optVal,
+                                url: `https://${hostname}/dp/${targetAsin}`,
+                                price: price,
+                                currency: currency,
+                                image: $(el).find('img').attr('src') || image // 順便抓變體的小圖
+                            });
+                        }
+                    }
+                });
+
+                // 掃描下拉選單 (select)
+                $(container).find('select option').each((j, opt) => {
+                    let optVal = $(opt).text().replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+                    let valAttr = $(opt).attr('value');
+
+                    let targetAsin = (valAttr && (valAttr.match(/([A-Z0-9]{10})/) || [])[1]);
+
+                    if (optVal && optVal !== 'Select' && optVal !== '-1' && optVal.length < 40) {
+                        options.push(optVal);
                         if (targetAsin && targetAsin.length === 10) {
                             exactVariants.push({
                                 sku: targetAsin,
@@ -232,20 +258,26 @@ async function scrape(url, selectedOptions = []) {
             });
 
             if (exactVariants.length > 0) {
-                console.log(`[Amazon Scraper] 🎯 DOM 屬性強拆成功，找到 ${exactVariants.length} 個真實 ASIN！`);
+                console.log(`[Amazon Scraper] 🎯 DOM 終極強拆成功，共搜集到 ${exactVariants.length} 個屬性標籤！`);
             }
         }
 
-        // 去除重複的 ASIN (DOM 抓取時可能會重複計算)
-        const uniqueVariants = [];
-        const seenAsins = new Set();
+        // 🚨 關鍵防護：將散落的屬性智能合併 (例如把「White」和「256GB」合併成「White / 256GB」)
+        const uniqueMap = new Map();
         for (const v of exactVariants) {
-            if (!seenAsins.has(v.sku)) {
-                seenAsins.add(v.sku);
-                uniqueVariants.push(v);
+            if (uniqueMap.has(v.sku)) {
+                const existing = uniqueMap.get(v.sku);
+                // 避免重複加入相同的字眼
+                if (!existing.spec.includes(v.spec)) {
+                    existing.spec = existing.spec + ' / ' + v.spec;
+                }
+                // 如果有找到小圖，優先使用小圖
+                if (v.image && v.image !== image) existing.image = v.image;
+            } else {
+                uniqueMap.set(v.sku, v);
             }
         }
-        exactVariants = uniqueVariants;
+        exactVariants = Array.from(uniqueMap.values());
 
         // 清理空屬性
         for (const key in availableVariants) {
@@ -256,7 +288,7 @@ async function scrape(url, selectedOptions = []) {
 
         const needsVariant = Object.keys(availableVariants).length > 0 || exactVariants.length > 0;
         if (needsVariant) {
-            console.log(`[Amazon Scraper] 📦 發現多規格商品！維度: ${Object.keys(availableVariants).join(', ')}`);
+            console.log(`[Amazon Scraper] 📦 發現多規格商品！最終整理出 ${exactVariants.length} 個獨立 ASIN。`);
         }
 
         if (!title || price === 0) {
@@ -268,7 +300,7 @@ async function scrape(url, selectedOptions = []) {
         // 整理傳回結果
         return {
             productInfo: {
-                source: 'amazon_proxy_scraper_v3',
+                source: 'amazon_proxy_scraper_v4',
                 title: title,
                 original_price: price,
                 original_currency: currency,
